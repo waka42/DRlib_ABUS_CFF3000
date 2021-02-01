@@ -58,3 +58,4 @@ TODO
 - Add an "attach to new doorlock" serial function so the whole cable mess can stay in a box nearby the door.
 - Figure out how to write more beautiful and shorter code.
 - Shrink compilation size.
+- Translate german parts of the code into english
