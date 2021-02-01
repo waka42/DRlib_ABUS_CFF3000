@@ -1,6 +1,9 @@
 # DRlib_ABUS_CFF3000
 Arduino Library for controlling the ABUS Hometek Pro CFF3000 Keyfob controlling an ABUS remote doorlock
 
+# WARNING
+This project was written by an ape trying to learn to code. If you can improve it, you're very VERY welcome! Just contact me here on github and I'll figure out how to connect you to this project. Github is a first to me, too.
+
 # About
 This project started out as a learning piece, trying to understand how I can hack a device that is not meant to be used this way and control it using an Arduino. As such, this code started out messy and still is. I learned C++ while I wrote this, so please understand that this is not the most optimized piece of code on the web. It works, that's what is important to me.
 
