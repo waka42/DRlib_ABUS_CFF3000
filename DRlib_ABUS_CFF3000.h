@@ -70,16 +70,16 @@ class DRlib_ABUS_CFF3000
 		void request_close_the_doorlock();
 		void request_open_the_doorlock();
 		void run_this_continuously();
-		void pin_relais_open(int pin);			//optional
-		void pin_relais_close(int pin);			//optional
-		void pin_status_led(int pin);			//optional
+		void pin_relais_open(int pin);			// call this function optionally, defaults will be used otherwise
+		void pin_relais_close(int pin);			// call this function optionally, defaults will be used otherwise
+		void pin_status_led(int pin);			// call this function optionally, defaults will be used otherwise
 	private:
 		void DR_operation();
 		void DR_to_standby();
 		void DR_activate();
-		void tuerschloss_oeffnen();
-		void tuerschloss_schliessen();
-		void tuerschloss_status_abfragen();
+		void open_doorlock();
+		void close_doorlock();
+		void status_doorlock();
 
 		// Door-Remote LED Input
 		int _LEDsignal = A0;
