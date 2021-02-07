@@ -1,5 +1,5 @@
 /*
-  Written 2021-01-23 by waka4200 (on reddit)
+  Written 2021-01-23 by waka42 (on reddit)
   
   This Library controls the ABUS door remote actuator. It uses a relay module to short out both ends of each switch electrically (necessary!).
   A third Pib "LEDsignal" monitors the point behind the Status LED, a bigger hole, which can be used to read the Status events.
@@ -17,13 +17,13 @@
 #include "Arduino.h"
 
 
-// FB LED Status Variablen
+// DR LED Status Variables
 uint16_t _sensorValue = 0;
-//bool  LED_aktiviert_sich = false;
-unsigned long _LED_ist_aktiv_seit = 0;
-//bool  LED_erkennung_aktiv = true;
-bool  _LED_gruen = false;
-bool  _LED_rot = false;
+//bool  LED_activating = false;
+unsigned long _LED_signal_active_since = 0;
+//bool  LED_detection_active = true;
+bool  _LED_green = false;
+bool  _LED_red = false;
 bool  _LED_error = false;
 bool  _flag_req_open_the_doorlock = false;
 bool  _flag_req_close_the_doorlock = false;
@@ -31,8 +31,8 @@ bool  _flag_req_doorlock_status = false;
 bool  _DR_active = false;
 uint8_t _LED_blink_counter = 0;
 unsigned long _LED_blink_timer = 0;
-bool _LED_leuchtstatus = false;
-bool _LED_leuchtstatus_old = false;
+bool _LED_light_status = false;
+bool _LED_light_status_old = false;
 uint8_t _LED_phase = 0;
 uint8_t _LED_phase_old = 0;
 uint16_t  _reset_delay = 10000; // After 12 seconds, become ready for inputs again
@@ -41,11 +41,11 @@ uint16_t  _reset_delay = 10000; // After 12 seconds, become ready for inputs aga
 int _open_doorlock_relay = 9;
 int _close_doorlock_relay = 10;
 
-// FB-Relay-Steuerung Variablen
-unsigned long _tuerschloss_input_timer = 0;
-String _hr_status = "Gestartet.";
+// DR Relais Control Variables
+unsigned long _doorlock_input_timer = 0;
+String _hr_status = "Started.";
 
-// Serial-Output Variablen
+// Serial Output Variables
 int _statuscode = 0;
 int _statuscode_old = 0;
 
@@ -73,179 +73,187 @@ void DRlib_ABUS_CFF3000::pin_status_led(int pin)
 
 void DRlib_ABUS_CFF3000::initialize()
 {
-  // FB Relay-Steuerung
+  // DR Relais Control
   pinMode(_open_doorlock_relay,OUTPUT);
   pinMode(_close_doorlock_relay,OUTPUT);
-  digitalWrite(_open_doorlock_relay,HIGH); //Relais is inverted
-  digitalWrite(_close_doorlock_relay,HIGH);  //Relais is inverted
+  digitalWrite(_open_doorlock_relay,HIGH);   // Relay is inverted!
+  digitalWrite(_close_doorlock_relay,HIGH);  // Relay is inverted!
 
-  //Serial-Output
+  // Serial Output
   Serial.begin(9600);
 
-  //Start-Delay
-  delay(2000); //FB muss sich erst beruhigen <-- PFLICHT!
+  // Start Delay
+  delay(2000); // DR needs to calm down on power up, takes about 2 seconds. DO NOT SKIP THIS!
   Serial.println("DRlib_ABUS_CFF3000: Ready");
 }
 
 
 
-// LED Auslese-Funktion
+// LED signal detection and computation
 void DRlib_ABUS_CFF3000::DR_operation()
 {
-  // Ablese-Block, daueraktiv pro Runde
+  // Read block. Continuously reads the current voltage
   _sensorValue = analogRead(_LEDsignal);
-  // Wert von 0-1023 = 0-5V, umrechnen.
+  // Recalculate from RAW values to Voltage on a Scale of 0-5V: 0-1023 = 0-5V
   float voltage = _sensorValue * (5.0 / 1023.0);
 
-  // Auswerten und damit Flags setzen
+  // Analyse and set flags
 
   // DEBUGGING
   //Serial.println(voltage);
 
   /*
-  // Diese Logik erkennt automatisch Veraenderungen. Dazu muss sie zeitnah laufen. Ist nicht garantiert, daher Ersatz. FB_LED_activate setzt LED_phase = 1
-  //
-  // Halbaktivierungs-Flag
-  if ( LED_erkennung_aktiv && (LED_phase <= 0 || LED_phase > 404) && voltage > 2.0 && voltage < 2.8 ) LED_aktiviert_sich = true;
-  // Vollaktivierungs-Flag
-  if ( LED_erkennung_aktiv && (LED_phase <= 0 || LED_phase > 404) && LED_aktiviert_sich && voltage > 3.0 && voltage < 3.6 ) {
-    if (DEBUG) Serial.println("DRlib_ABUS_CFF3000__DEBUG: Aktivierung erkannt");
-  	FB_LED_reset(); // Alles zurueck auf Anfang
+   * This Logic detects changes in voltage automatically. This needs to run closely, as an LED activation signal jumps from about 0V to above 2V,
+   * then within 200ms to above 3V, then 200ms later to 0V. I call this a Trigger Signal. This signals the Remote becoming active.
+   * This Logic is not used, since it's more of a dead-end logic-wise. This library gets active on request and does not wait for a Trigger.
+   * Checking for a Trigger is therefore senseless.
+   *
+  // Half-Activation Flag
+  if ( LED_detection_active && (LED_phase <= 0 || LED_phase > 404) && voltage > 2.0 && voltage < 2.8 ) LED_activating = true;
+  // Full-Activation Flag
+  if ( LED_detection_active && (LED_phase <= 0 || LED_phase > 404) && LED_activating && voltage > 3.0 && voltage < 3.6 ) {
+    if (DEBUG) Serial.println("DRlib_ABUS_CFF3000__DEBUG: Activation detected");
+  	DR_LED_reset(); // Reset variables, this is a code artifact I don't care about
   	LED_phase = 1;
-  	LED_ist_aktiv_seit = millis();
-    LED_erkennung_aktiv = false;
+  	LED_active_since = millis();
+    LED_detection_active = false;
   }
   */
 
-  // Wartephase
-  // Reaktionsphase nach 2 Sekunden
+  // Wait Phase, wait for 2 seconds, then check the LEDsignal status.
   if ( _LED_phase == 1 ){ // Schonung der CPU
-	  //if (DEBUG) Serial.println("DEBUG: FB-Phasencheck ist aktiv.");
-	  if (millis() - _LED_ist_aktiv_seit > 2000) _LED_phase = 2; // Zeit die Reaktion zu pruefen
+	  //if (DEBUG) Serial.println("DEBUG: DR Phase-Check active");
+	  if (millis() - _LED_signal_active_since > 2000) _LED_phase = 2; // Switch to Phase 2 after 2 seconds
   }
   
-  // Reaktionsphase
-  // Ablesen des Status bei 2200ms
-  if ( _LED_phase == 2 ){ // Schonung der CPU
-	  if ( millis() - _LED_ist_aktiv_seit > 2200) {
+  // Reaction Phase
+  // Read signal after 2200ms, 200ms extra so variations in the Remotes Microcontroller do not give us false inputs.
+  //
+  // Note: Now either you have Green = doorlock closed, Red = doorlock open, or Green-Red blinking. Here's the trick:
+  // 1. Read signal and change to phase 3
+  if ( _LED_phase == 2 ){ // save CPU time
+	  if ( millis() - _LED_signal_active_since > 2200) {
 	    if (voltage > 3.0) {
         // Vermutung: Gruene LED
-        if(_DEBUG) Serial.println("DRlib_ABUS_CFF3000__DEBUG: Gruen vermutet, Volt: " + String(voltage));
-  	    _LED_gruen = true;
+        if(_DEBUG) Serial.println("DRlib_ABUS_CFF3000__DEBUG: Green detected, Voltage: " + String(voltage));
+  	    _LED_green = true;
         _LED_phase = 3;
 	    } else {
         // Vermutung: Rote LED
-        if(_DEBUG) Serial.println("DRlib_ABUS_CFF3000__DEBUG: Rot vermutet, Volt: " + String(voltage));
-        _LED_rot = true;
+        if(_DEBUG) Serial.println("DRlib_ABUS_CFF3000__DEBUG: Red detected, Voltage: " + String(voltage));
+        _LED_red = true;
         _LED_phase = 3;
 	    }
 	  }
   }
 
-  // Phase: Fehlererkennung
-  if ( _LED_phase == 3 ){ // Schonung der CPU
-    if ( millis() - _LED_ist_aktiv_seit > 3500){
-      // Blink-Phase
+  // Phase 3: Connection Error detection
+  // 2. Check for blinking via a counter. Each time the Voltage switches, we count up or down, but just once!
+  if ( _LED_phase == 3 ){ // save CPU time
+    if ( millis() - _LED_signal_active_since > 3500){
+      // Blinking-Phase
 
-      // Starte Timer neu
+      // Start Timer
       if ( _LED_blink_timer == 0) {
-        _LED_blink_timer = millis(); // Starte Timer fuer Blink-Erkennung
-        if ( voltage > 3.0 ) { _LED_leuchtstatus = true; _LED_leuchtstatus_old = true; }
-        if ( voltage < 0.8 ) { _LED_leuchtstatus = false; _LED_leuchtstatus_old = false; }
+        _LED_blink_timer = millis(); // Reset Timer for blink detection
+        if ( voltage > 3.0 ) { _LED_light_status = true; _LED_light_status_old = true; }
+        if ( voltage < 0.8 ) { _LED_light_status = false; _LED_light_status_old = false; }
       }
 
-      // Teste Status nach 210ms, zaehle Blinkerei
+      // Check Voltage after delay, read signal, count or not count up to detect blinking
       if ( millis() - _LED_blink_timer > 220 ){
-    	  if(_DEBUG) Serial.println("Blinkzaehli laeuft, Volt: " + String(voltage));
-    	  if ( voltage > 3.0 ) _LED_leuchtstatus = true;
-    	  if ( voltage < 0.8 ) _LED_leuchtstatus = false;
-    	  if ( _LED_leuchtstatus != _LED_leuchtstatus_old ) {
+    	  if(_DEBUG) Serial.println("Blink-Counter running, Voltage: " + String(voltage));
+    	  if ( voltage > 3.0 ) _LED_light_status = true;
+    	  if ( voltage < 0.8 ) _LED_light_status = false;
+    	  if ( _LED_light_status != _LED_light_status_old ) {
     		  _LED_blink_counter = _LED_blink_counter + 1;
-    		  _LED_leuchtstatus_old = _LED_leuchtstatus;
+    		  _LED_light_status_old = _LED_light_status;
     	  }
     	  _LED_blink_timer = millis(); //Reset Timer
       }
     }
 
-    // Auswertung der Counterzaehlung. Etwas ungenau, scheint zu funktionieren.
-    if ( millis() - _LED_ist_aktiv_seit > 8000 ) {
+    // After 6 seconds, detect how many changes were detected. It's a bit wonky, but works.
+    if ( millis() - _LED_signal_active_since > 8000 ) {
       if(_DEBUG) Serial.println("DRlib_ABUS_CFF3000__DEBUG: LED Blink Counter: " + String(_LED_blink_counter));
       if (_LED_blink_counter > 2 ) {
-        // Blinken und damit Fehler erkannt, resette Variablen entsprechend. Ansonsten Status wie vermutet.
-        _LED_error = true;
-        _LED_gruen = false;
-        _LED_rot = false;
+    	  // More than 2 changes detected, must be an error. 3 might be a safer approach, but 2 worked fine so far.
+    	  // Note: We are setting green and red to false and error to true, which correctly transfers the status.
+    	  // One could save variable space by using a numbered counter, but I am unsure how much would be saved compared to understandability of this logic.
+    	  _LED_error = true;
+    	  _LED_green = false;
+    	  _LED_red = false;
       }
-      _LED_phase = 4; // Kein Blinken erkannt, weiter ohne Aenderung vom Erkennen beim ersten Auslesen
+      _LED_phase = 4; // No blinking detected. Continue without changing our original reading.
     }
   }
   
-  // Auswertungsphase
-  // Setze LED_phase entsprechend. Analysiere dabei moegliche Fehler
-  if ( _LED_phase == 4 ){ // Schonung der CPU
+  // Evaluate Results
+  // Set LED_phase to our result, which also stops this function from running.
+  if ( _LED_phase == 4 ){ // save CPU time
 	  // If Status was requested
 	  if(_flag_req_doorlock_status){
 		  if (_LED_error) _LED_phase = 40;
-		  else if (_LED_gruen) _LED_phase = 10;
-		  else if (_LED_rot)   _LED_phase = 20;
-		  else _LED_phase = 50; // Falls nichts davon passt, sollte nicht vorkommen
+		  else if (_LED_green) _LED_phase = 10;
+		  else if (_LED_red)   _LED_phase = 20;
+		  else _LED_phase = 50; // Just in case nothing matches. This means a major error in the code must have appeared!
 	  }
 
 	  // If close was requested
 	  if(_flag_req_close_the_doorlock){
 		  if (_LED_error) _LED_phase = 40;
-		  else if (_LED_gruen) _LED_phase = 10;
+		  else if (_LED_green) _LED_phase = 10;
 		  else _LED_phase = 50;
 	  }
 
 	  // If open was requested
 	  if(_flag_req_open_the_doorlock){
 		  if (_LED_error) _LED_phase = 40;
-		  else if (_LED_rot) _LED_phase = 20;
+		  else if (_LED_red) _LED_phase = 20;
 		  else _LED_phase = 50;
 	  }
   }
 }
 
-// Reset-Funktion fuer readLED
+// Reset-Function for DR_operation
 void DRlib_ABUS_CFF3000::DR_to_standby()
 {
 	_LED_phase_old = _LED_phase; // Save old status
 	_LED_phase = 0;
-	_LED_gruen = false;
-	_LED_rot = false;
+	_LED_green = false;
+	_LED_red = false;
 	_LED_error = false;
-	_LED_ist_aktiv_seit = 0;
-	// LED_erkennung_aktiv = true;
+	_LED_signal_active_since = 0;
+	// LED_detection_active = true; // obsolete
 	_LED_blink_counter = 0;
 	_flag_req_doorlock_status = false;
 	_flag_req_open_the_doorlock = false;
 	_flag_req_close_the_doorlock = false;
-	_tuerschloss_input_timer = 0;
+	_doorlock_input_timer = 0;
 	_LED_blink_counter = 0;
 	_DR_active = false;
 }
 
-// Aktivierungs-Funktion fuer readLED
+// DR_operation: Activation sequence, setting it all up
 void DRlib_ABUS_CFF3000::DR_activate()
 {
-	_tuerschloss_input_timer = millis();
+	_doorlock_input_timer = millis();
 	_LED_phase = 1;
-	_LED_ist_aktiv_seit = millis();
-	//LED_erkennung_aktiv = false;
+	_LED_signal_active_since = millis();
+	//LED_detection_active = false; // obsolete
 	_DR_active = true;
 }
 
-// API-Abruf: Frage aktuellen Status vom Tuerschloss ab
+// API: Return the current library Status code
 uint8_t DRlib_ABUS_CFF3000::DR_status()
 {
   uint8_t returncode = 0;
-	if (_LED_phase == 0) returncode = 0;	// Schlaeft
-	if (_LED_phase > 0 && _LED_phase < 10) returncode = 1;	// FB aktiv, Inputs werden gesammelt
-	if (_LED_phase == 10 ) returncode = 10; 	// Tuerschloss zu
-	if (_LED_phase == 20 ) returncode = 20; 	// Tuerschloss offen
-	if (_LED_phase == 40) returncode = 40;	// Verbindungsfehler
-	if (_LED_phase > 40) returncode = 50; // Fehler im Code! Sollte nicht zurueckkommen!
+	if (_LED_phase == 0) returncode = 0;	// Sleeps
+	if (_LED_phase > 0 && _LED_phase < 10) returncode = 1;	// Door Remote actively checking stuff
+	if (_LED_phase == 10 ) returncode = 10; 	// Doorlock closed
+	if (_LED_phase == 20 ) returncode = 20; 	// Doorlock open
+	if (_LED_phase == 40) returncode = 40;	// Connection to Doorlock failed
+	if (_LED_phase > 40) returncode = 50; // Code error! Something went wrong inside this librarys code!
   return returncode;
 }
 
@@ -266,58 +274,58 @@ void DRlib_ABUS_CFF3000::status_output_to_serial()
   Serial.println( "DRlib_ABUS_CFF3000: Status: " + _hr_status );
 }
 
-// API: Tuerschloss oeffnen
+// API: Request to open the doorlock
 void DRlib_ABUS_CFF3000::request_open_the_doorlock(){
 	if( _LED_phase == 0 ) _flag_req_open_the_doorlock = true;
 }
-void DRlib_ABUS_CFF3000::tuerschloss_oeffnen()
+void DRlib_ABUS_CFF3000::open_doorlock()
 {
-  if ( _LED_phase == 0 && _tuerschloss_input_timer == 0) {
-	  if(_DEBUG) Serial.println( "DRlib_ABUS_CFF3000__DEBUG: Tuer oeffnen..." );
+  if ( _LED_phase == 0 && _doorlock_input_timer == 0) {
+	  if(_DEBUG) Serial.println( "DRlib_ABUS_CFF3000__DEBUG: Opening doorlock..." );
 	  DR_activate();
 	  digitalWrite(_open_doorlock_relay,LOW);
   }
-  if (millis() - _tuerschloss_input_timer >=500) {
+  if (millis() - _doorlock_input_timer >=500) {
 	  digitalWrite(_open_doorlock_relay,HIGH);
-	  _tuerschloss_input_timer = 0;
+	  _doorlock_input_timer = 0;
   }
 }
 
 
-// API: Tuerschloss schliessen
+// API: Request to close the doorlock
 void DRlib_ABUS_CFF3000::request_close_the_doorlock(){
 	if( _LED_phase == 0 ) _flag_req_close_the_doorlock = true;
 }
-void DRlib_ABUS_CFF3000::tuerschloss_schliessen()
+void DRlib_ABUS_CFF3000::close_doorlock()
 {
-  if ( _LED_phase == 0 && _tuerschloss_input_timer == 0) {
-	  if(_DEBUG) Serial.println( "DRlib_ABUS_CFF3000__DEBUG: Tuer schliessen..." );
+  if ( _LED_phase == 0 && _doorlock_input_timer == 0) {
+	  if(_DEBUG) Serial.println( "DRlib_ABUS_CFF3000__DEBUG: Closing doorlock..." );
 	  DR_activate();
 	  digitalWrite(_close_doorlock_relay,LOW);
   }
-  if (millis() - _tuerschloss_input_timer >=500) {
+  if (millis() - _doorlock_input_timer >=500) {
 	  digitalWrite(_close_doorlock_relay,HIGH);
-	  _tuerschloss_input_timer = 0;
+	  _doorlock_input_timer = 0;
   }
 }
 
 
-// API: Tuerschlossstatus abfragen
+// API: Request the doorlock status
 void DRlib_ABUS_CFF3000::request_get_doorlock_status(){
 	if ( _LED_phase == 0 ) _flag_req_doorlock_status = true;
 }
-void DRlib_ABUS_CFF3000::tuerschloss_status_abfragen()
+void DRlib_ABUS_CFF3000::status_doorlock()
 {
-  if ( _LED_phase == 0 && _tuerschloss_input_timer == 0 ){
-    if(_DEBUG) Serial.println( "DRlib_ABUS_CFF3000__DEBUG: Status abfragen..." );
+  if ( _LED_phase == 0 && _doorlock_input_timer == 0 ){
+    if(_DEBUG) Serial.println( "DRlib_ABUS_CFF3000__DEBUG: Request status..." );
     DR_activate();
     digitalWrite(_close_doorlock_relay,LOW);
     digitalWrite(_open_doorlock_relay,LOW);
   }
-  if ( millis() - _tuerschloss_input_timer >= 500) {
+  if ( millis() - _doorlock_input_timer >= 500) {
     digitalWrite(_close_doorlock_relay,HIGH);
     digitalWrite(_open_doorlock_relay,HIGH);
-    _tuerschloss_input_timer = 0;
+    _doorlock_input_timer = 0;
   }
 }
 
@@ -325,13 +333,13 @@ void DRlib_ABUS_CFF3000::tuerschloss_status_abfragen()
 void DRlib_ABUS_CFF3000::run_this_continuously()
 {
   _statuscode = DR_status();
-  if(_DEBUG) if ( _statuscode_old != _statuscode) { _statuscode_old = _statuscode; status_output_to_serial(); }  // Veraenderten Status ausgeben
-  if ( _flag_req_doorlock_status ) tuerschloss_status_abfragen();
-  if ( _flag_req_open_the_doorlock ) tuerschloss_oeffnen();
-  if ( _flag_req_close_the_doorlock ) tuerschloss_schliessen();
+  if(_DEBUG) if ( _statuscode_old != _statuscode) { _statuscode_old = _statuscode; status_output_to_serial(); }  // Print new status
+  if ( _flag_req_doorlock_status ) status_doorlock();
+  if ( _flag_req_open_the_doorlock ) open_doorlock();
+  if ( _flag_req_close_the_doorlock ) close_doorlock();
   if (_DR_active) {
 	  if ( _LED_phase > 0 && _LED_phase < 10 ) DR_operation();  // Run Checks if active Check Phase running
-	  if ( millis() - _LED_ist_aktiv_seit > _reset_delay ) DR_to_standby(); // Standby after 10 Seconds
+	  if ( millis() - _LED_signal_active_since > _reset_delay ) DR_to_standby(); // Standby after 10 Seconds
   }
 
 }
